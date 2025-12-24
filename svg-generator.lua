@@ -803,6 +803,38 @@ local function layerToOptimizedSVGContent(image, width, height, offsetX, offsetY
   return table.concat(contentParts, '\n')
 end
 
+-- Convert a single layer/cel to SVG content with CSS classes and paths
+local function layerToOptimizedSVGContentWithClasses(image, width, height, offsetX, offsetY, spriteWidth, spriteHeight)
+  if not image or not width or not height then
+    return nil, nil
+  end
+  
+  offsetX = offsetX or 0
+  offsetY = offsetY or 0
+  
+  -- Use imageToOptimizedSVGWithClasses to get CSS classes and path groups
+  local cssClasses, pathGroups = imageToOptimizedSVGWithClasses(image, width, height, nil, offsetX, offsetY, spriteWidth, spriteHeight)
+  
+  if not cssClasses or not pathGroups or not next(pathGroups) then
+    return nil, nil
+  end
+  
+  -- Generate CSS style block
+  local cssStyle = generateCSS(cssClasses)
+  
+  -- Generate path content
+  local pathParts = {}
+  for className, paths in pairs(pathGroups) do
+    if paths and #paths > 0 then
+      for _, pathData in ipairs(paths) do
+        table.insert(pathParts, string.format('<path d="%s" class="%s"/>', pathData, className))
+      end
+    end
+  end
+  
+  return cssStyle, table.concat(pathParts, '\n')
+end
+
 -- Convert sprite to optimized SVG using path data (groups similar colors)
 local function spriteToOptimizedSVG(sprite, frameIndex, useLayerGroups)
   frameIndex = frameIndex or 1
@@ -903,13 +935,14 @@ local function spriteToOptimizedSVG(sprite, frameIndex, useLayerGroups)
 end
 
 -- Get layers as individual SVG strings (for JSON export)
-local function getLayersAsSVGArray(sprite, frameIndex, optimized)
+local function getLayersAsSVGArray(sprite, frameIndex, optimized, useCSSClasses)
   if not sprite then
     return {}
   end
   
   frameIndex = frameIndex or 1
   optimized = optimized or false
+  useCSSClasses = useCSSClasses or false
   
   local width = sprite.width
   local height = sprite.height
@@ -959,25 +992,43 @@ local function getLayersAsSVGArray(sprite, frameIndex, optimized)
     local celX = cel.position.x
     local celY = cel.position.y
     
-    local layerContent
-    if optimized then
-      layerContent = layerToOptimizedSVGContent(celImage, celWidth, celHeight, celX, celY)
+    if useCSSClasses then
+      local cssStyle, pathContent = layerToOptimizedSVGContentWithClasses(celImage, celWidth, celHeight, celX, celY, width, height)
+      if cssStyle and pathContent then
+        -- Wrap in complete SVG with style block
+        local svgParts = {}
+        table.insert(svgParts, string.format('<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">', 
+          width, height, width, height))
+        table.insert(svgParts, string.format('<style>%s</style>', cssStyle))
+        table.insert(svgParts, pathContent)
+        table.insert(svgParts, '</svg>')
+        
+        table.insert(layers, {
+          name = layer.name or ("Layer " .. i),
+          svg = table.concat(svgParts, '\n')
+        })
+      end
     else
-      layerContent = layerToSVGContent(celImage, celWidth, celHeight, celX, celY)
-    end
-    
-    if layerContent then
-      -- Wrap in complete SVG
-      local svgParts = {}
-      table.insert(svgParts, string.format('<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">', 
-        width, height, width, height))
-      table.insert(svgParts, layerContent)
-      table.insert(svgParts, '</svg>')
+      local layerContent
+      if optimized then
+        layerContent = layerToOptimizedSVGContent(celImage, celWidth, celHeight, celX, celY)
+      else
+        layerContent = layerToSVGContent(celImage, celWidth, celHeight, celX, celY)
+      end
       
-      table.insert(layers, {
-        name = layer.name or ("Layer " .. i),
-        svg = table.concat(svgParts, '\n')
-      })
+      if layerContent then
+        -- Wrap in complete SVG
+        local svgParts = {}
+        table.insert(svgParts, string.format('<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">', 
+          width, height, width, height))
+        table.insert(svgParts, layerContent)
+        table.insert(svgParts, '</svg>')
+        
+        table.insert(layers, {
+          name = layer.name or ("Layer " .. i),
+          svg = table.concat(svgParts, '\n')
+        })
+      end
     end
     
     ::continue::

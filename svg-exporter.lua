@@ -330,15 +330,26 @@ local function exportToFile(sprite, frameIndex)
 end
 
 local function exportToInline(sprite, frameIndex)
-  if not sprite then
+  -- Ensure we have a valid sprite (refresh from active sprite if needed)
+  local currentSprite = sprite
+  if not currentSprite or not currentSprite.isValid then
+    currentSprite = app.activeSprite
+  end
+  
+  if not currentSprite then
     app.alert("No sprite is open")
     return
   end
   
-  frameIndex = frameIndex or app.activeFrame.frameNumber
+  -- Get current frame index
+  local currentFrameIndex = frameIndex
+  if app.activeFrame and app.activeFrame.sprite == currentSprite then
+    currentFrameIndex = app.activeFrame.frameNumber
+  end
+  currentFrameIndex = currentFrameIndex or 1
   
-  -- For inline, use layer groups too
-  local svgContent = svgGenerator.exportSpriteToSVG(sprite, frameIndex, false, true)
+  -- For inline, use optimized format with CSS classes and paths by default
+  local svgContent = svgGenerator.exportSpriteToSVG(currentSprite, currentFrameIndex, true, true, true)
   if not svgContent then
     app.alert("Sprite is empty or has no visible pixels")
     return
@@ -365,10 +376,21 @@ local function exportToInline(sprite, frameIndex)
     app.clipboard(svgContent)
     app.alert("SVG code copied to clipboard!")
   end}
-  dlg:button{ id="optimized", text="Use Optimized", onclick=function()
-    local optimized = svgGenerator.exportSpriteToSVG(sprite, frameIndex, true, true)
-    if optimized then
-      dlg:modify{ id="svgcode", text=optimized }
+  dlg:button{ id="raw", text="Use Raw Format", onclick=function()
+    -- Refresh sprite reference
+    local currentSprite = sprite
+    if not currentSprite or not currentSprite.isValid then
+      currentSprite = app.activeSprite
+    end
+    if currentSprite then
+      local currentFrameIndex = currentFrameIndex or 1
+      if app.activeFrame and app.activeFrame.sprite == currentSprite then
+        currentFrameIndex = app.activeFrame.frameNumber
+      end
+      local raw = svgGenerator.exportSpriteToSVG(currentSprite, currentFrameIndex, false, true, false)
+      if raw then
+        dlg:modify{ id="svgcode", text=raw }
+      end
     end
   end}
   dlg:newrow()
@@ -390,8 +412,8 @@ local function exportToJSON(sprite, frameIndex)
   
   frameIndex = frameIndex or app.activeFrame.frameNumber
   
-  -- Get layers as array of SVG strings
-  local layers = svgGenerator.getLayersAsSVGArray(sprite, frameIndex, false)
+  -- Get layers as array of SVG strings with CSS classes and paths
+  local layers = svgGenerator.getLayersAsSVGArray(sprite, frameIndex, true, true)
   if not layers or #layers == 0 then
     -- Provide more helpful error message
     local layerCount = 0
