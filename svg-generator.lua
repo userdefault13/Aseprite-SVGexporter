@@ -340,7 +340,7 @@ end
 
 -- Convert image to optimized SVG with CSS classes and paths
 -- This creates the format: <style> with color classes, <g> groups with paths
-local function imageToOptimizedSVGWithClasses(image, width, height, layerName, offsetX, offsetY, spriteWidth, spriteHeight)
+local function imageToOptimizedSVGWithClasses(image, width, height, layerName, offsetX, offsetY, spriteWidth, spriteHeight, bounds)
   if not image or not width or not height then
     return nil, nil
   end
@@ -352,6 +352,18 @@ local function imageToOptimizedSVGWithClasses(image, width, height, layerName, o
   local imageWidth = image.width
   local imageHeight = image.height
   
+  -- Calculate bounds for filtering
+  local boundsX = 0
+  local boundsY = 0
+  local boundsWidth = spriteWidth or width
+  local boundsHeight = spriteHeight or height
+  if bounds and not bounds.isEmpty then
+    boundsX = bounds.x
+    boundsY = bounds.y
+    boundsWidth = bounds.width
+    boundsHeight = bounds.height
+  end
+  
   -- Step 1: Collect all pixels grouped by color
   local colorGroups = {}
   
@@ -359,12 +371,20 @@ local function imageToOptimizedSVGWithClasses(image, width, height, layerName, o
     for x = 0, imageWidth - 1 do
       local color = getPixelColor(image, x, y)
       if color and color.a and color.a > 0 then
-        local hex = rgbaToHex(color.r, color.g, color.b, color.a)
-        if not colorGroups[hex] then
-          colorGroups[hex] = {}
+        -- Calculate absolute position
+        local absX = x + offsetX
+        local absY = y + offsetY
+        
+        -- Filter by bounds if provided
+        if absX >= boundsX and absX < boundsX + boundsWidth and
+           absY >= boundsY and absY < boundsY + boundsHeight then
+          local hex = rgbaToHex(color.r, color.g, color.b, color.a)
+          if not colorGroups[hex] then
+            colorGroups[hex] = {}
+          end
+          -- Store with offset relative to bounds (for viewBox)
+          table.insert(colorGroups[hex], {x = absX - boundsX, y = absY - boundsY})
         end
-        -- Store with offset applied
-        table.insert(colorGroups[hex], {x = x + offsetX, y = y + offsetY})
       end
     end
   end
@@ -441,12 +461,22 @@ local function generateCSS(cssClasses)
 end
 
 -- Convert sprite to optimized SVG with CSS classes and paths
-local function spriteToOptimizedSVGWithClasses(sprite, frameIndex, useLayerGroups)
+local function spriteToOptimizedSVGWithClasses(sprite, frameIndex, useLayerGroups, bounds)
   frameIndex = frameIndex or 1
   useLayerGroups = useLayerGroups or false
   
   local width = sprite.width
   local height = sprite.height
+  local offsetX = 0
+  local offsetY = 0
+  
+  -- If bounds provided, crop to selection
+  if bounds and not bounds.isEmpty then
+    width = bounds.width
+    height = bounds.height
+    offsetX = bounds.x
+    offsetY = bounds.y
+  end
   
   -- Get all visible layers for this frame
   -- Use lenient checking similar to getLayersAsSVGArray
@@ -508,7 +538,7 @@ local function spriteToOptimizedSVGWithClasses(sprite, frameIndex, useLayerGroup
     local celY = cel.position.y
     
     local cssClasses, pathGroups = imageToOptimizedSVGWithClasses(
-      celImage, celWidth, celHeight, layerData.name, celX, celY, width, height)
+      celImage, celWidth, celHeight, layerData.name, celX, celY, width, height, bounds)
     
     if cssClasses and pathGroups then
       -- Merge CSS classes (avoid duplicates)
@@ -620,13 +650,25 @@ local function spriteToOptimizedSVGWithClasses(sprite, frameIndex, useLayerGroup
 end
 
 -- Convert a single layer/cel to SVG content (rectangles only, no wrapper)
-local function layerToSVGContent(image, width, height, offsetX, offsetY)
+local function layerToSVGContent(image, width, height, offsetX, offsetY, bounds)
   if not image or not width or not height then
     return nil
   end
   
   offsetX = offsetX or 0
   offsetY = offsetY or 0
+  
+  -- Calculate bounds for filtering
+  local boundsX = 0
+  local boundsY = 0
+  local boundsWidth = width
+  local boundsHeight = height
+  if bounds and not bounds.isEmpty then
+    boundsX = bounds.x
+    boundsY = bounds.y
+    boundsWidth = bounds.width
+    boundsHeight = bounds.height
+  end
   
   local contentParts = {}
   local hasPixels = false
@@ -639,13 +681,21 @@ local function layerToSVGContent(image, width, height, offsetX, offsetY)
     for x = 0, imageWidth - 1 do
       local color = getPixelColor(image, x, y)
       if color and color.a and color.a > 0 then
-        local fillColor = rgbaToHex(color.r, color.g, color.b, color.a)
-        -- Apply cel position offset
-        local svgX = x + offsetX
-        local svgY = y + offsetY
-        table.insert(contentParts, string.format('    <rect x="%d" y="%d" width="1" height="1" fill="%s"/>', 
-          svgX, svgY, fillColor))
-        hasPixels = true
+        -- Calculate absolute position
+        local absX = x + offsetX
+        local absY = y + offsetY
+        
+        -- Filter by bounds if provided
+        if absX >= boundsX and absX < boundsX + boundsWidth and
+           absY >= boundsY and absY < boundsY + boundsHeight then
+          local fillColor = rgbaToHex(color.r, color.g, color.b, color.a)
+          -- Store with offset relative to bounds (for viewBox)
+          local svgX = absX - boundsX
+          local svgY = absY - boundsY
+          table.insert(contentParts, string.format('    <rect x="%d" y="%d" width="1" height="1" fill="%s"/>', 
+            svgX, svgY, fillColor))
+          hasPixels = true
+        end
       end
     end
   end
@@ -659,12 +709,22 @@ end
 
 -- Convert sprite to SVG using rectangles for each pixel (simple method)
 -- Can be optimized later to merge adjacent pixels
-local function spriteToSVG(sprite, frameIndex, useLayerGroups)
+local function spriteToSVG(sprite, frameIndex, useLayerGroups, bounds)
   frameIndex = frameIndex or 1
   useLayerGroups = useLayerGroups or false
   
   local width = sprite.width
   local height = sprite.height
+  local offsetX = 0
+  local offsetY = 0
+  
+  -- If bounds provided, crop to selection
+  if bounds and not bounds.isEmpty then
+    width = bounds.width
+    height = bounds.height
+    offsetX = bounds.x
+    offsetY = bounds.y
+  end
   
   -- Get all visible layers for this frame
   -- Use lenient checking similar to getLayersAsSVGArray
@@ -728,7 +788,7 @@ local function spriteToSVG(sprite, frameIndex, useLayerGroups)
       local celX = cel.position.x
       local celY = cel.position.y
       
-      local layerContent = layerToSVGContent(celImage, celWidth, celHeight, celX, celY)
+      local layerContent = layerToSVGContent(celImage, celWidth, celHeight, celX, celY, bounds)
       if layerContent then
         table.insert(svgParts, string.format('  <g class="%s">', className))
         table.insert(svgParts, layerContent)
@@ -745,7 +805,7 @@ local function spriteToSVG(sprite, frameIndex, useLayerGroups)
       local celX = cel.position.x
       local celY = cel.position.y
       
-      local layerContent = layerToSVGContent(celImage, celWidth, celHeight, celX, celY)
+      local layerContent = layerToSVGContent(celImage, celWidth, celHeight, celX, celY, bounds)
       if layerContent then
         table.insert(svgParts, layerContent)
       end
@@ -758,13 +818,25 @@ local function spriteToSVG(sprite, frameIndex, useLayerGroups)
 end
 
 -- Convert a single layer to optimized SVG content (groups similar colors)
-local function layerToOptimizedSVGContent(image, width, height, offsetX, offsetY)
+local function layerToOptimizedSVGContent(image, width, height, offsetX, offsetY, bounds)
   if not image or not width or not height then
     return nil
   end
   
   offsetX = offsetX or 0
   offsetY = offsetY or 0
+  
+  -- Calculate bounds for filtering
+  local boundsX = 0
+  local boundsY = 0
+  local boundsWidth = width
+  local boundsHeight = height
+  if bounds and not bounds.isEmpty then
+    boundsX = bounds.x
+    boundsY = bounds.y
+    boundsWidth = bounds.width
+    boundsHeight = bounds.height
+  end
   
   -- Use the image's actual dimensions
   local imageWidth = image.width
@@ -777,12 +849,20 @@ local function layerToOptimizedSVGContent(image, width, height, offsetX, offsetY
     for x = 0, imageWidth - 1 do
       local color = getPixelColor(image, x, y)
       if color and color.a and color.a > 0 then
-        local colorKey = rgbaToHex(color.r, color.g, color.b, color.a)
-        if not colorGroups[colorKey] then
-          colorGroups[colorKey] = {}
+        -- Calculate absolute position
+        local absX = x + offsetX
+        local absY = y + offsetY
+        
+        -- Filter by bounds if provided
+        if absX >= boundsX and absX < boundsX + boundsWidth and
+           absY >= boundsY and absY < boundsY + boundsHeight then
+          local colorKey = rgbaToHex(color.r, color.g, color.b, color.a)
+          if not colorGroups[colorKey] then
+            colorGroups[colorKey] = {}
+          end
+          -- Store with offset relative to bounds (for viewBox)
+          table.insert(colorGroups[colorKey], {x = absX - boundsX, y = absY - boundsY})
         end
-        -- Store with offset applied
-        table.insert(colorGroups[colorKey], {x = x + offsetX, y = y + offsetY})
       end
     end
   end
@@ -804,7 +884,7 @@ local function layerToOptimizedSVGContent(image, width, height, offsetX, offsetY
 end
 
 -- Convert a single layer/cel to SVG content with CSS classes and paths
-local function layerToOptimizedSVGContentWithClasses(image, width, height, offsetX, offsetY, spriteWidth, spriteHeight)
+local function layerToOptimizedSVGContentWithClasses(image, width, height, offsetX, offsetY, spriteWidth, spriteHeight, bounds)
   if not image or not width or not height then
     return nil, nil
   end
@@ -813,7 +893,7 @@ local function layerToOptimizedSVGContentWithClasses(image, width, height, offse
   offsetY = offsetY or 0
   
   -- Use imageToOptimizedSVGWithClasses to get CSS classes and path groups
-  local cssClasses, pathGroups = imageToOptimizedSVGWithClasses(image, width, height, nil, offsetX, offsetY, spriteWidth, spriteHeight)
+  local cssClasses, pathGroups = imageToOptimizedSVGWithClasses(image, width, height, nil, offsetX, offsetY, spriteWidth, spriteHeight, bounds)
   
   if not cssClasses or not pathGroups or not next(pathGroups) then
     return nil, nil
@@ -836,12 +916,22 @@ local function layerToOptimizedSVGContentWithClasses(image, width, height, offse
 end
 
 -- Convert sprite to optimized SVG using path data (groups similar colors)
-local function spriteToOptimizedSVG(sprite, frameIndex, useLayerGroups)
+local function spriteToOptimizedSVG(sprite, frameIndex, useLayerGroups, bounds)
   frameIndex = frameIndex or 1
   useLayerGroups = useLayerGroups or false
   
   local width = sprite.width
   local height = sprite.height
+  local offsetX = 0
+  local offsetY = 0
+  
+  -- If bounds provided, crop to selection
+  if bounds and not bounds.isEmpty then
+    width = bounds.width
+    height = bounds.height
+    offsetX = bounds.x
+    offsetY = bounds.y
+  end
   
   -- Get all visible layers for this frame
   -- Use lenient checking similar to getLayersAsSVGArray
@@ -905,7 +995,7 @@ local function spriteToOptimizedSVG(sprite, frameIndex, useLayerGroups)
       local celX = cel.position.x
       local celY = cel.position.y
       
-      local layerContent = layerToOptimizedSVGContent(celImage, celWidth, celHeight, celX, celY)
+      local layerContent = layerToOptimizedSVGContent(celImage, celWidth, celHeight, celX, celY, bounds)
       if layerContent then
         table.insert(svgParts, string.format('  <g class="%s">', className))
         table.insert(svgParts, layerContent)
@@ -922,7 +1012,7 @@ local function spriteToOptimizedSVG(sprite, frameIndex, useLayerGroups)
       local celX = cel.position.x
       local celY = cel.position.y
       
-      local layerContent = layerToOptimizedSVGContent(celImage, celWidth, celHeight, celX, celY)
+      local layerContent = layerToOptimizedSVGContent(celImage, celWidth, celHeight, celX, celY, bounds)
       if layerContent then
         table.insert(svgParts, layerContent)
       end
@@ -935,7 +1025,7 @@ local function spriteToOptimizedSVG(sprite, frameIndex, useLayerGroups)
 end
 
 -- Get layers as individual SVG strings (for JSON export)
-local function getLayersAsSVGArray(sprite, frameIndex, optimized, useCSSClasses)
+local function getLayersAsSVGArray(sprite, frameIndex, optimized, useCSSClasses, bounds)
   if not sprite then
     return {}
   end
@@ -946,6 +1036,16 @@ local function getLayersAsSVGArray(sprite, frameIndex, optimized, useCSSClasses)
   
   local width = sprite.width
   local height = sprite.height
+  local offsetX = 0
+  local offsetY = 0
+  
+  -- If bounds provided, crop to selection
+  if bounds and not bounds.isEmpty then
+    width = bounds.width
+    height = bounds.height
+    offsetX = bounds.x
+    offsetY = bounds.y
+  end
   
   -- Validate sprite dimensions
   if not width or not height or width <= 0 or height <= 0 then
@@ -993,7 +1093,7 @@ local function getLayersAsSVGArray(sprite, frameIndex, optimized, useCSSClasses)
     local celY = cel.position.y
     
     if useCSSClasses then
-      local cssStyle, pathContent = layerToOptimizedSVGContentWithClasses(celImage, celWidth, celHeight, celX, celY, width, height)
+      local cssStyle, pathContent = layerToOptimizedSVGContentWithClasses(celImage, celWidth, celHeight, celX, celY, width, height, bounds)
       if cssStyle and pathContent then
         -- Wrap in complete SVG with style block
         local svgParts = {}
@@ -1011,9 +1111,9 @@ local function getLayersAsSVGArray(sprite, frameIndex, optimized, useCSSClasses)
     else
       local layerContent
       if optimized then
-        layerContent = layerToOptimizedSVGContent(celImage, celWidth, celHeight, celX, celY)
+        layerContent = layerToOptimizedSVGContent(celImage, celWidth, celHeight, celX, celY, bounds)
       else
-        layerContent = layerToSVGContent(celImage, celWidth, celHeight, celX, celY)
+        layerContent = layerToSVGContent(celImage, celWidth, celHeight, celX, celY, bounds)
       end
       
       if layerContent then
@@ -1038,7 +1138,7 @@ local function getLayersAsSVGArray(sprite, frameIndex, optimized, useCSSClasses)
 end
 
 -- Export sprite to SVG string
-function exportSpriteToSVG(sprite, frameIndex, optimized, useLayerGroups, useCSSClasses)
+function exportSpriteToSVG(sprite, frameIndex, optimized, useLayerGroups, useCSSClasses, bounds)
   if not sprite then
     return nil
   end
@@ -1047,11 +1147,11 @@ function exportSpriteToSVG(sprite, frameIndex, optimized, useLayerGroups, useCSS
   useCSSClasses = useCSSClasses or false
   
   if useCSSClasses then
-    return spriteToOptimizedSVGWithClasses(sprite, frameIndex, useLayerGroups)
+    return spriteToOptimizedSVGWithClasses(sprite, frameIndex, useLayerGroups, bounds)
   elseif optimized then
-    return spriteToOptimizedSVG(sprite, frameIndex, useLayerGroups)
+    return spriteToOptimizedSVG(sprite, frameIndex, useLayerGroups, bounds)
   else
-    return spriteToSVG(sprite, frameIndex, useLayerGroups)
+    return spriteToSVG(sprite, frameIndex, useLayerGroups, bounds)
   end
 end
 

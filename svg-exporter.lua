@@ -71,7 +71,7 @@ local function getOutputFilename(sprite)
   return baseName
 end
 
-local function exportToFile(sprite, frameIndex)
+local function exportToFile(sprite, frameIndex, bounds)
   if not sprite then
     app.alert("No sprite is open")
     return
@@ -79,7 +79,7 @@ local function exportToFile(sprite, frameIndex)
   
   frameIndex = frameIndex or app.activeFrame.frameNumber
   
-  local svgContent = svgGenerator.exportSpriteToSVG(sprite, frameIndex, false, true)
+  local svgContent = svgGenerator.exportSpriteToSVG(sprite, frameIndex, false, true, false, bounds)
   if not svgContent then
     app.alert("Sprite is empty or has no visible pixels")
     return
@@ -133,7 +133,8 @@ local function exportToFile(sprite, frameIndex)
     currentFrameIndex = currentFrameIndex or 1
     
     -- Use layer groups (true) for SVG file export
-    svgContent = svgGenerator.exportSpriteToSVG(currentSprite, currentFrameIndex, optimized, true, useCSSClasses)
+    -- Note: bounds parameter not used in file export dialog (use export menu instead)
+    svgContent = svgGenerator.exportSpriteToSVG(currentSprite, currentFrameIndex, optimized, true, useCSSClasses, nil)
     
     -- Check if SVG is empty (just tags with no content)
     local isEmpty = false
@@ -329,7 +330,7 @@ local function exportToFile(sprite, frameIndex)
   dlg:show()
 end
 
-local function exportToInline(sprite, frameIndex)
+local function exportToInline(sprite, frameIndex, bounds)
   -- Ensure we have a valid sprite (refresh from active sprite if needed)
   local currentSprite = sprite
   if not currentSprite or not currentSprite.isValid then
@@ -349,7 +350,7 @@ local function exportToInline(sprite, frameIndex)
   currentFrameIndex = currentFrameIndex or 1
   
   -- For inline, use optimized format with CSS classes and paths by default
-  local svgContent = svgGenerator.exportSpriteToSVG(currentSprite, currentFrameIndex, true, true, true)
+  local svgContent = svgGenerator.exportSpriteToSVG(currentSprite, currentFrameIndex, true, true, true, bounds)
   if not svgContent then
     app.alert("Sprite is empty or has no visible pixels")
     return
@@ -387,7 +388,7 @@ local function exportToInline(sprite, frameIndex)
       if app.activeFrame and app.activeFrame.sprite == currentSprite then
         currentFrameIndex = app.activeFrame.frameNumber
       end
-      local raw = svgGenerator.exportSpriteToSVG(currentSprite, currentFrameIndex, false, true, false)
+      local raw = svgGenerator.exportSpriteToSVG(currentSprite, currentFrameIndex, false, true, false, nil)
       if raw then
         dlg:modify{ id="svgcode", text=raw }
       end
@@ -404,7 +405,7 @@ local function exportToInline(sprite, frameIndex)
   dlg:show()
 end
 
-local function exportToJSON(sprite, frameIndex)
+local function exportToJSON(sprite, frameIndex, bounds)
   if not sprite then
     app.alert("No sprite is open")
     return
@@ -413,7 +414,7 @@ local function exportToJSON(sprite, frameIndex)
   frameIndex = frameIndex or app.activeFrame.frameNumber
   
   -- Get layers as array of SVG strings with CSS classes and paths
-  local layers = svgGenerator.getLayersAsSVGArray(sprite, frameIndex, true, true)
+  local layers = svgGenerator.getLayersAsSVGArray(sprite, frameIndex, true, true, bounds)
   if not layers or #layers == 0 then
     -- Provide more helpful error message
     local layerCount = 0
@@ -586,18 +587,53 @@ local function showExportMenu(sprite)
   
   local dlg = Dialog("Export to SVG")
   
+  -- Check if there's a selection (before preview so we can use it)
+  local hasSelection = false
+  local selectionBounds = nil
+  if sprite and sprite.selection then
+    local selection = sprite.selection
+    if selection and selection.bounds then
+      local bounds = selection.bounds
+      if not bounds.isEmpty then
+        hasSelection = true
+        selectionBounds = bounds
+      end
+    end
+  end
+  
   -- Add preview canvas at the top
   local previewSize = 128
   local spriteWidth = sprite.width
   local spriteHeight = sprite.height
-  local scale = math.min(previewSize / spriteWidth, previewSize / spriteHeight, 1.0)
-  local previewWidth = math.floor(spriteWidth * scale)
-  local previewHeight = math.floor(spriteHeight * scale)
+  
+  -- Function to update preview based on selection state
+  local function updatePreviewDimensions()
+    local displayWidth = spriteWidth
+    local displayHeight = spriteHeight
+    local displayX = 0
+    local displayY = 0
+    
+    -- If selection export is enabled, use selection bounds
+    if hasSelection and dlg.data.exportSelection then
+      displayWidth = selectionBounds.width
+      displayHeight = selectionBounds.height
+      displayX = selectionBounds.x
+      displayY = selectionBounds.y
+    end
+    
+    local scale = math.min(previewSize / displayWidth, previewSize / displayHeight, 1.0)
+    local previewWidth = math.floor(displayWidth * scale)
+    local previewHeight = math.floor(displayHeight * scale)
+    
+    return previewWidth, previewHeight, displayWidth, displayHeight, displayX, displayY, scale
+  end
+  
+  local initialPreviewWidth, initialPreviewHeight = updatePreviewDimensions()
   
   dlg:canvas{
     id="preview",
-    width=previewWidth,
-    height=previewHeight,
+    width=initialPreviewWidth,
+    height=initialPreviewHeight,
     onpaint=function(ev)
       local ctx = ev.context
       if sprite then
@@ -607,12 +643,42 @@ local function showExportMenu(sprite)
         if currentFrame and currentFrame.sprite == sprite then
           frameNum = currentFrame.frameNumber
         end
+        
+        -- Determine what to show based on selection checkbox
+        local displayWidth = spriteWidth
+        local displayHeight = spriteHeight
+        local displayX = 0
+        local displayY = 0
+        
+        if hasSelection and dlg.data.exportSelection then
+          -- Show only selection area
+          displayWidth = selectionBounds.width
+          displayHeight = selectionBounds.height
+          displayX = selectionBounds.x
+          displayY = selectionBounds.y
+        end
+        
+        -- Calculate preview scale
+        local scale = math.min(previewSize / displayWidth, previewSize / displayHeight, 1.0)
+        local previewWidth = math.floor(displayWidth * scale)
+        local previewHeight = math.floor(displayHeight * scale)
+        
         -- Create a temporary image to render the sprite
         local img = Image(spriteWidth, spriteHeight)
         img:drawSprite(sprite, frameNum)
-        -- Draw the image scaled to fit the preview
-        ctx:drawImage(img, Rectangle(0, 0, spriteWidth, spriteHeight), 
-                      Rectangle(0, 0, previewWidth, previewHeight))
+        
+        -- Draw the image (cropped to selection if enabled)
+        if hasSelection and dlg.data.exportSelection then
+          -- Draw only the selection area
+          ctx:drawImage(img, 
+            Rectangle(displayX, displayY, displayWidth, displayHeight), 
+            Rectangle(0, 0, previewWidth, previewHeight))
+        else
+          -- Draw full sprite
+          ctx:drawImage(img, 
+            Rectangle(0, 0, spriteWidth, spriteHeight), 
+            Rectangle(0, 0, previewWidth, previewHeight))
+        end
       end
     end
   }
@@ -626,20 +692,48 @@ local function showExportMenu(sprite)
     text="Choose export format:",
     focus=false
   }
+  
+  dlg:newrow()
+  dlg:check{ 
+    id="exportSelection",
+    label="Export Selection Only",
+    text="Export only the selected area (if available)",
+    selected=false,
+    enabled=hasSelection,
+    onchange=function()
+      -- Refresh preview when checkbox changes
+      local previewWidth, previewHeight = updatePreviewDimensions()
+      dlg:modify{ id="preview", width=previewWidth, height=previewHeight }
+      dlg:repaint()
+    end
+  }
+  if hasSelection then
+    dlg:newrow()
+    dlg:label{ 
+      text=string.format("Selection: %dx%d at (%d,%d)", 
+        selectionBounds.width, selectionBounds.height, 
+        selectionBounds.x, selectionBounds.y),
+      focus=false
+    }
+  end
+  
   dlg:newrow()
   dlg:button{ id="file", text="SVG File", onclick=function()
+    local exportSelection = dlg.data.exportSelection and hasSelection
     dlg:close()
-    exportToFile(sprite)
+    exportToFile(sprite, nil, exportSelection and selectionBounds or nil)
   end}
   dlg:newrow()
   dlg:button{ id="inline", text="SVG Inline Code", onclick=function()
+    local exportSelection = dlg.data.exportSelection and hasSelection
     dlg:close()
-    exportToInline(sprite)
+    exportToInline(sprite, nil, exportSelection and selectionBounds or nil)
   end}
   dlg:newrow()
   dlg:button{ id="json", text="SVG JSON", onclick=function()
+    local exportSelection = dlg.data.exportSelection and hasSelection
     dlg:close()
-    exportToJSON(sprite)
+    exportToJSON(sprite, nil, exportSelection and selectionBounds or nil)
   end}
   dlg:newrow()
   dlg:button{ id="selectfile", text="Select Different File", onclick=function()
