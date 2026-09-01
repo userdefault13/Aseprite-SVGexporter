@@ -2,7 +2,7 @@
   "name": "svg-exporter",
   "displayName": "SVG Exporter",
   "description": "Export Aseprite drawings to SVG as inline code, JSON, or SVG files",
-  "version": "1.0.1",
+  "version": "1.0.4",
   "author": {
     "name": "Undeadpixel Studio",
     "email": "user.defaults@gmail.com"

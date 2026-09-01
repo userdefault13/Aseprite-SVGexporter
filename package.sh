@@ -1,15 +1,18 @@
 #!/bin/bash
 # Package the SVG Exporter extension for Aseprite
 
-EXTENSION_NAME="svg-exporter.aseprite-extension"
+set -euo pipefail
 
-# Remove old extension if it exists
+EXTENSION_NAME="svg-exporter.aseprite-extension"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+cd "$ROOT"
+
 if [ -f "$EXTENSION_NAME" ]; then
   rm "$EXTENSION_NAME"
   echo "Removed old extension file"
 fi
 
-# Create the extension zip file
 zip -r "$EXTENSION_NAME" \
   package.json \
   svg-exporter.lua \
@@ -23,4 +26,3 @@ echo "1. Open Aseprite"
 echo "2. Go to Edit > Preferences > Extensions"
 echo "3. Click 'Add Extension' and select $EXTENSION_NAME"
 echo "4. Restart Aseprite"
-

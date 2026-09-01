@@ -393,15 +393,15 @@ local function imageToOptimizedSVGWithClasses(image, width, height, layerName, o
     return nil, nil
   end
   
-  -- Step 2: Create CSS classes for each color
+  -- Step 2: Create CSS classes for each color.
+  -- Use hex-stable class names so the same color merges cleanly across layers
+  -- (avoids color1/color11 collisions that leave paths pointing at the wrong fill).
   local cssClasses = {}
   local classMap = {} -- Maps hex color to class name
-  local classCounter = 1
   
   for hex, _ in pairs(colorGroups) do
-    local className
     local hexLower = string.lower(hex)
-    -- Try to infer meaningful names from common colors
+    local className
     if hexLower == "#ffffff" or hexLower == "#fff" then
       className = "white"
     elseif hexLower == "#000000" or hexLower == "#000" then
@@ -413,9 +413,7 @@ local function imageToOptimizedSVGWithClasses(image, width, height, layerName, o
     elseif hexLower == "#f696c6" then
       className = "gotchi-cheek"
     else
-      -- Use a generic name
-      className = "color" .. classCounter
-      classCounter = classCounter + 1
+      className = "c" .. string.gsub(hexLower, "#", "")
     end
     
     classMap[hex] = className
@@ -524,10 +522,12 @@ local function spriteToOptimizedSVGWithClasses(sprite, frameIndex, useLayerGroup
     return nil
   end
   
-  -- Collect all CSS classes and paths from all layers
+  -- Collect all CSS classes and paths from all layers (bottom → top order)
   local allCSSClasses = {}
+  local seenClassNames = {} -- class name -> hex
   local allPathGroups = {}
-  local layerGroups = {}
+  -- Ordered list so SVG paint order matches Aseprite stack (pairs() is unordered)
+  local layerGroupsList = {}
   
   for _, layerData in ipairs(layers) do
     local cel = layerData.cel
@@ -541,32 +541,23 @@ local function spriteToOptimizedSVGWithClasses(sprite, frameIndex, useLayerGroup
       celImage, celWidth, celHeight, layerData.name, celX, celY, width, height, bounds)
     
     if cssClasses and pathGroups then
-      -- Merge CSS classes (avoid duplicates)
-      local classMap = {}
-      for _, css in ipairs(allCSSClasses) do
-        classMap[css.name] = css.hex
-      end
-      
       for _, css in ipairs(cssClasses) do
-        if not classMap[css.name] or classMap[css.name] ~= css.hex then
-          -- Check if we need to rename to avoid conflicts
-          local originalName = css.name
-          local counter = 1
-          while classMap[css.name] do
-            css.name = originalName .. counter
-            counter = counter + 1
-          end
+        local existingHex = seenClassNames[css.name]
+        if not existingHex then
           table.insert(allCSSClasses, css)
-          classMap[css.name] = css.hex
+          seenClassNames[css.name] = css.hex
+        elseif existingHex ~= css.hex then
+          -- Same semantic name (e.g. white) with different hex should not happen
+          -- with hex-stable names; keep first definition.
         end
       end
       
-      -- Store paths for this layer
       if useLayerGroups then
-        local className = escapeClassName(layerData.name)
-        layerGroups[className] = pathGroups
+        table.insert(layerGroupsList, {
+          name = escapeClassName(layerData.name),
+          pathGroups = pathGroups
+        })
       else
-        -- Merge into main path groups
         for className, paths in pairs(pathGroups) do
           if not allPathGroups[className] then
             allPathGroups[className] = {}
@@ -582,8 +573,8 @@ local function spriteToOptimizedSVGWithClasses(sprite, frameIndex, useLayerGroup
   -- Check if we have any content to export
   local hasContent = false
   if useLayerGroups then
-    for _, pathGroups in pairs(layerGroups) do
-      for _, paths in pairs(pathGroups) do
+    for _, layerGroup in ipairs(layerGroupsList) do
+      for _, paths in pairs(layerGroup.pathGroups) do
         if paths and #paths > 0 then
           hasContent = true
           break
@@ -607,8 +598,9 @@ local function spriteToOptimizedSVGWithClasses(sprite, frameIndex, useLayerGroup
   
   -- Build SVG
   local svgParts = {}
-  table.insert(svgParts, string.format('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d">', 
-    width, height))
+  table.insert(svgParts, string.format(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d" shape-rendering="crispEdges">',
+    width, height, width, height))
   
   -- Add style block
   if #allCSSClasses > 0 then
@@ -617,11 +609,11 @@ local function spriteToOptimizedSVGWithClasses(sprite, frameIndex, useLayerGroup
     table.insert(svgParts, '</style>')
   end
   
-  -- Add path groups
+  -- Add path groups in stack order (bottom layer first)
   if useLayerGroups then
-    for layerName, pathGroups in pairs(layerGroups) do
-      table.insert(svgParts, string.format('<g class="%s">', layerName))
-      for className, paths in pairs(pathGroups) do
+    for _, layerGroup in ipairs(layerGroupsList) do
+      table.insert(svgParts, string.format('<g class="%s">', layerGroup.name))
+      for className, paths in pairs(layerGroup.pathGroups) do
         if paths and #paths > 0 then
           table.insert(svgParts, string.format('<g class="%s">', className))
           for _, pathData in ipairs(paths) do

@@ -1,4 +1,4 @@
 *.aseprite-extension
 .DS_Store
 __MACOSX/
-
+output/

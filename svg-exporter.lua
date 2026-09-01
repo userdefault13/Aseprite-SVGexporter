@@ -2,7 +2,7 @@
 -- Exports sprite to SVG in multiple formats: inline code, JSON, or file
 
 -- Extension version
-local EXTENSION_VERSION = "1.0.1"
+local EXTENSION_VERSION = "1.0.4"
 
 -- Load the SVG generator module
 local function getScriptPath()
@@ -71,6 +71,30 @@ local function getOutputFilename(sprite)
   return baseName
 end
 
+local function isSvgEmpty(svgContent)
+  if not svgContent or svgContent == "" then
+    return true
+  end
+  local content = string.gsub(svgContent, "<svg[^>]*>", "")
+  content = string.gsub(content, "</svg>", "")
+  content = string.gsub(content, "%s+", "")
+  return content == ""
+end
+
+local function describeVisibleLayers(sprite, frameIndex)
+  local lines = {}
+  local visibleCount = 0
+  for i, layer in ipairs(sprite.layers) do
+    if layer and layer.isVisible ~= false and layer.isImage ~= false then
+      visibleCount = visibleCount + 1
+      local cel = layer:cel(frameIndex) or layer:cel(1)
+      local status = (cel and cel.image) and "has pixels" or "empty cel"
+      table.insert(lines, string.format("  • %s (%s)", layer.name or ("Layer " .. i), status))
+    end
+  end
+  return visibleCount, lines
+end
+
 local function exportToFile(sprite, frameIndex, bounds)
   if not sprite then
     app.alert("No sprite is open")
@@ -87,6 +111,14 @@ local function exportToFile(sprite, frameIndex, bounds)
   
   local filename = getOutputFilename(sprite)
   local dlg = Dialog("Export SVG File")
+  if bounds and not bounds.isEmpty then
+    dlg:label{
+      text=string.format("Selection: %dx%d at (%d,%d)",
+        bounds.width, bounds.height, bounds.x, bounds.y),
+      focus=false
+    }
+    dlg:newrow()
+  end
   dlg:file{ 
     id="path",
     label="Save as:",
@@ -132,184 +164,43 @@ local function exportToFile(sprite, frameIndex, bounds)
     end
     currentFrameIndex = currentFrameIndex or 1
     
-    -- Use layer groups (true) for SVG file export
-    -- Note: bounds parameter not used in file export dialog (use export menu instead)
-    svgContent = svgGenerator.exportSpriteToSVG(currentSprite, currentFrameIndex, optimized, true, useCSSClasses, nil)
-    
-    -- Check if SVG is empty (just tags with no content)
-    local isEmpty = false
-    if svgContent then
-      -- Check if SVG only contains opening and closing tags with nothing in between
-      local content = string.gsub(svgContent, "<svg[^>]*>", "")
-      content = string.gsub(content, "</svg>", "")
-      content = string.gsub(content, "%s+", "")
-      isEmpty = (content == "")
+    svgContent = svgGenerator.exportSpriteToSVG(
+      currentSprite, currentFrameIndex, optimized, true, useCSSClasses, bounds)
+
+    if isSvgEmpty(svgContent) and useCSSClasses then
+      svgContent = svgGenerator.exportSpriteToSVG(
+        currentSprite, currentFrameIndex, optimized, true, false, bounds)
     end
-    
-    -- If CSS classes export failed or is empty, fall back to regular export
-    if (not svgContent or svgContent == "" or isEmpty) and useCSSClasses then
-      svgContent = svgGenerator.exportSpriteToSVG(currentSprite, currentFrameIndex, optimized, true, false)
-      isEmpty = false
-      if svgContent then
-        local content = string.gsub(svgContent, "<svg[^>]*>", "")
-        content = string.gsub(content, "</svg>", "")
-        content = string.gsub(content, "%s+", "")
-        isEmpty = (content == "")
+
+    if isSvgEmpty(svgContent) then
+      local visibleCount, layerLines = describeVisibleLayers(currentSprite, currentFrameIndex)
+      local debugInfo = {
+        "Export produced no visible pixels.",
+        "",
+        "Sprite: " .. (currentSprite.filename or "Untitled"),
+        "Frame: " .. currentFrameIndex,
+        "Size: " .. currentSprite.width .. "x" .. currentSprite.height,
+        "Visible image layers: " .. visibleCount,
+      }
+      if bounds and not bounds.isEmpty then
+        table.insert(debugInfo, string.format(
+          "Selection: %dx%d at (%d,%d)",
+          bounds.width, bounds.height, bounds.x, bounds.y))
       end
-    end
-    
-    if not svgContent or svgContent == "" or isEmpty then
-      -- Debug: Check what layers we actually found and test export directly
-      local debugInfo = {}
-      table.insert(debugInfo, "Sprite: " .. (currentSprite.filename or "Untitled"))
-      table.insert(debugInfo, "Frame: " .. currentFrameIndex)
-      table.insert(debugInfo, "Sprite Size: " .. currentSprite.width .. "x" .. currentSprite.height)
-      table.insert(debugInfo, "Total Layers: " .. #currentSprite.layers)
-      table.insert(debugInfo, "")
-      
-      -- Check each layer
-      local visibleLayers = 0
-      local layersWithCels = 0
-      for i, layer in ipairs(currentSprite.layers) do
-        if layer then
-          local isVisible = layer.isVisible
-          local isImage = layer.isImage
-          if isVisible ~= false and isImage ~= false then
-            visibleLayers = visibleLayers + 1
-            local cel = layer:cel(currentFrameIndex) or layer:cel(1)
-            if cel and cel.image then
-              layersWithCels = layersWithCels + 1
-              -- Check if image has pixels using the same method as export
-              local hasPixels = false
-              local celImage = cel.image
-              local celWidth = celImage.width
-              local celHeight = celImage.height
-              local celX = cel.position.x
-              local celY = cel.position.y
-              local pixelCount = 0
-              local samplePixels = {}
-              local firstPixel = nil
-              
-              -- Check sprite color mode
-              local colorMode = currentSprite.colorMode
-              local colorModeStr = "unknown"
-              if colorMode == ColorMode.RGB then
-                colorModeStr = "RGB"
-              elseif colorMode == ColorMode.INDEXED then
-                colorModeStr = "INDEXED"
-              elseif colorMode == ColorMode.GRAYSCALE then
-                colorModeStr = "GRAYSCALE"
-              end
-              
-              -- Use the same pixel detection as the export function
-              for y = 0, celHeight - 1 do
-                for x = 0, celWidth - 1 do
-                  local pixel = celImage:getPixel(x, y)
-                  
-                  -- Extract RGBA using same method as getPixelColor
-                  local byte0 = pixel & 0xFF
-                  local byte1 = (pixel >> 8) & 0xFF
-                  local byte2 = (pixel >> 16) & 0xFF
-                  local byte3 = (pixel >> 24) & 0xFF
-                  
-                  -- Try app.pixelColor.rgba first
-                  local r2, g2, b2, a2 = app.pixelColor.rgba(pixel)
-                  
-                  local r, g, b, a
-                  if r2 and type(r2) == "number" and r2 >= 0 and r2 <= 255 and 
-                     g2 and type(g2) == "number" and g2 >= 0 and g2 <= 255 and
-                     b2 and type(b2) == "number" and b2 >= 0 and b2 <= 255 and
-                     a2 and type(a2) == "number" and a2 >= 0 and a2 <= 255 then
-                    r, g, b, a = r2, g2, b2, a2
-                  else
-                    -- Use ABGR format (swap R and B from ARGB)
-                    a = byte3
-                    r = byte0  -- Red from byte0
-                    g = byte1
-                    b = byte2  -- Blue from byte2
-                  end
-                  
-                  -- Ensure all values are in valid range
-                  r = math.max(0, math.min(255, r or 0))
-                  g = math.max(0, math.min(255, g or 0))
-                  b = math.max(0, math.min(255, b or 0))
-                  a = math.max(0, math.min(255, a or 0))
-                  
-                  -- For indexed color mode, try to get the actual color from palette
-                  if colorMode == ColorMode.INDEXED and a == 0 then
-                    -- In indexed mode, get color index and look up in palette
-                    local index = pixel & 0xFF  -- Lower 8 bits for index
-                    if index ~= 0 then
-                      local palette = currentSprite.palettes[1]
-                      if palette then
-                        local color = palette:getColor(index)
-                        if color then
-                          r = color.red
-                          g = color.green
-                          b = color.blue
-                          a = color.alpha
-                        end
-                      end
-                    end
-                  end
-                  
-                  -- Store first pixel for debugging (even if transparent)
-                  if not firstPixel then
-                    firstPixel = string.format("first pixel (0,0): rgba(%d,%d,%d,%d), raw=%d", r, g, b, a, pixel)
-                  end
-                  
-                  if a > 0 then
-                    hasPixels = true
-                    pixelCount = pixelCount + 1
-                    -- Store first few non-transparent pixel samples for debugging
-                    if #samplePixels < 3 then
-                      table.insert(samplePixels, string.format("(%d,%d): rgba(%d,%d,%d,%d)", x, y, r, g, b, a))
-                    end
-                  end
-                end
-              end
-              
-              table.insert(debugInfo, string.format("  - Color Mode: %s", colorModeStr))
-              
-              local pixelInfo = string.format("pixels=%d", pixelCount)
-              if firstPixel then
-                pixelInfo = pixelInfo .. ", " .. firstPixel
-              end
-              if #samplePixels > 0 then
-                pixelInfo = pixelInfo .. ", samples: " .. table.concat(samplePixels, ", ")
-              end
-              
-              table.insert(debugInfo, string.format("Layer %d: %s", i, layer.name or "unnamed"))
-              table.insert(debugInfo, string.format("  - Cel: %s", cel and "yes" or "no"))
-              table.insert(debugInfo, string.format("  - Position: (%d, %d)", celX, celY))
-              table.insert(debugInfo, string.format("  - Image Size: %dx%d", celWidth, celHeight))
-              table.insert(debugInfo, string.format("  - Has Pixels: %s", hasPixels and "yes" or "no"))
-              table.insert(debugInfo, string.format("  - Pixel Count: %d", pixelCount))
-              if firstPixel then
-                table.insert(debugInfo, string.format("  - %s", firstPixel))
-              end
-              if #samplePixels > 0 then
-                table.insert(debugInfo, string.format("  - Sample pixels: %s", table.concat(samplePixels, ", ")))
-              end
-              table.insert(debugInfo, "")
-            end
-          end
+      if #layerLines > 0 then
+        table.insert(debugInfo, "")
+        table.insert(debugInfo, "Layers:")
+        for _, line in ipairs(layerLines) do
+          table.insert(debugInfo, line)
         end
       end
-      
-      table.insert(debugInfo, "")
-      table.insert(debugInfo, "Visible layers: " .. visibleLayers)
-      table.insert(debugInfo, "Layers with cels: " .. layersWithCels)
-      table.insert(debugInfo, "")
-      table.insert(debugInfo, "Make sure at least one layer is visible and contains pixels.")
       table.insert(debugInfo, "")
       table.insert(debugInfo, "SVG Exporter v" .. EXTENSION_VERSION)
-      
       app.alert(table.concat(debugInfo, "\n"))
       return
     end
-    
-    local file = io.open(path, "w")
+
+    local file = io.open(path, "wb")
     if file then
       file:write(svgContent)
       file:close()
@@ -355,42 +246,94 @@ local function exportToInline(sprite, frameIndex, bounds)
     app.alert("Sprite is empty or has no visible pixels")
     return
   end
+
+  local function statusText(content)
+    return string.format("SVG ready (%d characters). Use Copy or Save.", #content)
+  end
   
-  -- Show dialog with inline SVG code
+  -- Dialog avoids Entry widgets: Aseprite caps entry text at 4096 chars
   local dlg = Dialog("SVG Inline Code")
   dlg:newrow()
   dlg:label{ 
-    id="label",
-    text="Copy the SVG code below:",
+    id="status",
+    text=statusText(svgContent),
     focus=false
   }
   dlg:newrow()
-  dlg:entry{
-    id="svgcode",
-    text=svgContent,
-    multiline=true,
-    readonly=true,
-    focus=true
+  dlg:check{
+    id="markdownFence",
+    text="Wrap copy in markdown code fence",
+    selected=false
   }
   dlg:newrow()
   dlg:button{ id="copy", text="Copy to Clipboard", onclick=function()
-    app.clipboard(svgContent)
-    app.alert("SVG code copied to clipboard!")
+    local payload = svgContent
+    local mode = "plain"
+    if dlg.data.markdownFence then
+      payload = "```svg\n" .. svgContent .. "\n```"
+      mode = "markdown"
+    end
+    local ok, err = pcall(function()
+      app.clipboard.text = payload
+    end)
+    if ok then
+      app.alert(string.format(
+        "SVG copied to clipboard (%s, %d characters).", mode, #payload))
+    else
+      app.alert("Failed to copy to clipboard:\n" .. tostring(err) ..
+        "\n\nUse Save SVG File instead.")
+    end
+  end}
+  dlg:button{ id="save", text="Save SVG File", onclick=function()
+    dlg:close()
+
+    local filename = getOutputFilename(currentSprite)
+    local saveDlg = Dialog("Save SVG File")
+    saveDlg:file{
+      id="path",
+      label="Save as:",
+      filename=filename .. ".svg",
+      save=true,
+      filetypes={"svg"}
+    }
+    saveDlg:button{ id="ok", text="Save", onclick=function()
+      local path = saveDlg.data.path
+      if not path or path == "" then
+        app.alert("Please specify a file path")
+        return
+      end
+
+      local file = io.open(path, "wb")
+      if file then
+        file:write(svgContent)
+        file:close()
+        app.alert(string.format(
+          "SVG exported successfully (%d characters) to:\n%s",
+          #svgContent, path))
+        saveDlg:close()
+      else
+        app.alert("Error: Could not write file to:\n" .. path)
+      end
+    end}
+    saveDlg:button{ id="cancel", text="Cancel", onclick=function()
+      saveDlg:close()
+    end}
+    saveDlg:show()
   end}
   dlg:button{ id="raw", text="Use Raw Format", onclick=function()
-    -- Refresh sprite reference
-    local currentSprite = sprite
-    if not currentSprite or not currentSprite.isValid then
-      currentSprite = app.activeSprite
+    local spriteRef = currentSprite
+    if not spriteRef or not spriteRef.isValid then
+      spriteRef = app.activeSprite
     end
-    if currentSprite then
-      local currentFrameIndex = currentFrameIndex or 1
-      if app.activeFrame and app.activeFrame.sprite == currentSprite then
-        currentFrameIndex = app.activeFrame.frameNumber
+    if spriteRef then
+      local frame = currentFrameIndex or 1
+      if app.activeFrame and app.activeFrame.sprite == spriteRef then
+        frame = app.activeFrame.frameNumber
       end
-      local raw = svgGenerator.exportSpriteToSVG(currentSprite, currentFrameIndex, false, true, false, nil)
+      local raw = svgGenerator.exportSpriteToSVG(spriteRef, frame, false, true, false, bounds)
       if raw then
-        dlg:modify{ id="svgcode", text=raw }
+        svgContent = raw
+        dlg:modify{ id="status", text=statusText(svgContent) }
       end
     end
   end}
@@ -434,81 +377,94 @@ local function exportToJSON(sprite, frameIndex, bounds)
     str = string.gsub(str, "\t", "\\t")
     return str
   end
-  
-  -- Build JSON with layers array
-  local jsonParts = {}
-  table.insert(jsonParts, '{')
-  table.insert(jsonParts, string.format('  "width": %d,', sprite.width))
-  table.insert(jsonParts, string.format('  "height": %d,', sprite.height))
-  table.insert(jsonParts, string.format('  "frame": %d,', frameIndex))
-  table.insert(jsonParts, '  "layers": [')
-  
-  for i, layerData in ipairs(layers) do
-    local escapedSvg = escapeJson(layerData.svg)
-    local comma = (i < #layers) and "," or ""
-    table.insert(jsonParts, string.format('    {\n      "name": "%s",\n      "svg": "%s"\n    }%s', 
-      escapeJson(layerData.name), escapedSvg, comma))
+
+  local function buildJsonFromLayers(layerList, spr, frame)
+    local parts = {}
+    table.insert(parts, '{')
+    table.insert(parts, string.format('  "width": %d,', spr.width))
+    table.insert(parts, string.format('  "height": %d,', spr.height))
+    table.insert(parts, string.format('  "frame": %d,', frame))
+    table.insert(parts, '  "layers": [')
+
+    for i, layerData in ipairs(layerList) do
+      local escapedSvg = escapeJson(layerData.svg)
+      local comma = (i < #layerList) and "," or ""
+      table.insert(parts, string.format('    {\n      "name": "%s",\n      "svg": "%s"\n    }%s',
+        escapeJson(layerData.name), escapedSvg, comma))
+    end
+
+    table.insert(parts, '  ]')
+    table.insert(parts, '}')
+    return table.concat(parts, '\n')
   end
+
+  local function statusText(content)
+    return string.format("JSON ready (%d characters). Use Copy or Save.", #content)
+  end
+
+  local jsonContent = buildJsonFromLayers(layers, sprite, frameIndex)
   
-  table.insert(jsonParts, '  ]')
-  table.insert(jsonParts, '}')
-  
-  local jsonContent = table.concat(jsonParts, '\n')
-  
+  -- Dialog avoids Entry widgets: Aseprite caps entry text at 4096 chars
   local dlg = Dialog("SVG JSON Export")
   dlg:newrow()
   dlg:label{ 
-    id="label",
-    text="JSON with SVG layers array:",
+    id="status",
+    text=statusText(jsonContent),
     focus=false
   }
   dlg:newrow()
-  dlg:entry{
-    id="jsoncode",
-    text=jsonContent,
-    multiline=true,
-    readonly=true,
-    focus=true
-  }
-  dlg:newrow()
   dlg:button{ id="copy", text="Copy to Clipboard", onclick=function()
-    app.clipboard(jsonContent)
-    app.alert("JSON code copied to clipboard!")
-  end}
-  dlg:button{ id="save", text="Save JSON File", onclick=function()
-    local filename = getOutputFilename(sprite)
-    local path = app.fs.joinPath(app.fs.filePath(sprite.filename) or app.fs.userConfigPath, filename .. ".json")
-    local file = io.open(path, "w")
-    if file then
-      file:write(jsonContent)
-      file:close()
-      app.alert("JSON exported successfully to:\n" .. path)
+    local ok, err = pcall(function()
+      app.clipboard.text = jsonContent
+    end)
+    if ok then
+      app.alert(string.format("JSON copied to clipboard (%d characters).", #jsonContent))
     else
-      app.alert("Error: Could not write file")
+      app.alert("Failed to copy to clipboard:\n" .. tostring(err) ..
+        "\n\nUse Save JSON File instead.")
     end
   end}
-  dlg:button{ id="optimized", text="Use Optimized SVG", onclick=function()
-    local optLayers = svgGenerator.getLayersAsSVGArray(sprite, frameIndex, true)
-    if optLayers and #optLayers > 0 then
-      local jsonPartsOpt = {}
-      table.insert(jsonPartsOpt, '{')
-      table.insert(jsonPartsOpt, string.format('  "width": %d,', sprite.width))
-      table.insert(jsonPartsOpt, string.format('  "height": %d,', sprite.height))
-      table.insert(jsonPartsOpt, string.format('  "frame": %d,', frameIndex))
-      table.insert(jsonPartsOpt, '  "layers": [')
-      
-      for i, layerData in ipairs(optLayers) do
-        local escapedSvg = escapeJson(layerData.svg)
-        local comma = (i < #optLayers) and "," or ""
-        table.insert(jsonPartsOpt, string.format('    {\n      "name": "%s",\n      "svg": "%s"\n    }%s', 
-          escapeJson(layerData.name), escapedSvg, comma))
+  dlg:button{ id="save", text="Save JSON File", onclick=function()
+    dlg:close()
+
+    local filename = getOutputFilename(sprite)
+    local saveDlg = Dialog("Save JSON File")
+    saveDlg:file{ 
+      id="path",
+      label="Save as:",
+      filename=filename .. ".json",
+      save=true,
+      filetypes={"json"}
+    }
+    saveDlg:button{ id="ok", text="Save", onclick=function()
+      local path = saveDlg.data.path
+      if not path or path == "" then
+        app.alert("Please specify a file path")
+        return
       end
-      
-      table.insert(jsonPartsOpt, '  ]')
-      table.insert(jsonPartsOpt, '}')
-      
-      local jsonOpt = table.concat(jsonPartsOpt, '\n')
-      dlg:modify{ id="jsoncode", text=jsonOpt }
+
+      local file = io.open(path, "wb")
+      if file then
+        file:write(jsonContent)
+        file:close()
+        app.alert(string.format(
+          "JSON exported successfully (%d characters) to:\n%s",
+          #jsonContent, path))
+        saveDlg:close()
+      else
+        app.alert("Error: Could not write file to:\n" .. path)
+      end
+    end}
+    saveDlg:button{ id="cancel", text="Cancel", onclick=function()
+      saveDlg:close()
+    end}
+    saveDlg:show()
+  end}
+  dlg:button{ id="raw", text="Use Raw Format", onclick=function()
+    local rawLayers = svgGenerator.getLayersAsSVGArray(sprite, frameIndex, false, false, bounds)
+    if rawLayers and #rawLayers > 0 then
+      jsonContent = buildJsonFromLayers(rawLayers, sprite, frameIndex)
+      dlg:modify{ id="status", text=statusText(jsonContent) }
     end
   end}
   dlg:newrow()

@@ -3,14 +3,14 @@
 An Aseprite extension that exports sprite drawings to SVG format in three different ways:
 
 1. **SVG File** - Exports as a standalone `.svg` file
-2. **SVG Inline Code** - Displays the SVG code in a dialog that can be copied to clipboard
-3. **SVG JSON** - Exports the SVG code embedded in a JSON object, which can be saved as a file or copied
+2. **SVG Inline Code** - Generates SVG and offers Copy to Clipboard or Save SVG File
+3. **SVG JSON** - Exports SVG layers as JSON, with Copy to Clipboard or Save JSON File
 
 ## Installation
 
 1. Package the extension:
    ```bash
-   zip -r svg-exporter.aseprite-extension package.json svg-exporter.lua svg-generator.lua
+   ./package.sh
    ```
 
 2. Install in Aseprite:
@@ -21,23 +21,26 @@ An Aseprite extension that exports sprite drawings to SVG format in three differ
 
 ## Usage
 
-After installation, you'll find the export options under:
-- **File > Export > Export to SVG (Choose Format)** - Shows a menu to choose format
-- **File > Export > SVG File** - Directly export to SVG file
-- **File > Export > SVG Inline** - Export as inline SVG code
-- **File > Export > SVG JSON** - Export as JSON with SVG code
+After installation, open **File > SVG Exporter** (or run the extension from the File menu). The export dialog lets you:
+
+- Preview the current frame
+- Export the full sprite or a selection only
+- Choose **SVG File**, **SVG Inline Code**, or **SVG JSON**
+
+If no sprite is open, you can pick an `.ase` / `.aseprite` file from disk first.
 
 ## Features
 
 - **Multi-layer support**: Handles all visible layers in your sprite
 - Exports current frame of the active sprite
+- **Selection export**: Crop to the active marquee from the export menu
 - Supports transparency (alpha channel)
 - Preserves exact pixel colors
-- Optimized export option (experimental)
+- Optimized export with merged paths and hex-stable CSS classes
 - Copy to clipboard functionality
 - **SVG File Export**: Uses `<g>` elements with class names to group layers
 - **JSON Export**: Array format with one SVG per layer, including layer names
-- **Inline Export**: Shows complete SVG with layer groups
+- **Inline Export**: Full SVG with layer groups via Copy or Save (not shown in a text field — Aseprite dialog entries truncate at 4096 characters)
 
 ## Export Formats
 
@@ -75,7 +78,7 @@ Exports an array of layer objects, each containing the layer name and its SVG co
 ```
 
 ### Inline SVG
-Displays the complete SVG code with layer groups, which can be copied directly into HTML or other documents.
+Generates the complete SVG with layer groups. Use **Copy to Clipboard** to paste into HTML/other documents, or **Save SVG File** to write the full output to disk. Leave **Wrap in markdown code fence** unchecked for plain SVG; enable it to copy as a ` ```svg ` block.
 
 ## How It Works
 
@@ -90,6 +93,42 @@ The extension converts each pixel in your sprite to an SVG `<rect>` element. The
 ## Notes
 
 - Large sprites may generate large SVG files since each pixel becomes a rectangle
-- The optimized export option attempts to group similar pixels (experimental)
+- The optimized export merges adjacent pixels into paths and assigns hex-stable CSS classes (e.g. `c4e4e8c`)
+- Canonical Aavegotchi colors map to `.gotchi-primary`, `.gotchi-secondary`, and `.gotchi-cheek`
 - Transparency is preserved using RGBA color values
+- Inline and JSON dialogs do not show the full code in a text field (Aseprite caps entry widgets at 4096 characters); use Copy or Save for the complete payload
+
+## Batch CLI (side-scroll library)
+
+Headless export of Paarcel Aavegotchi aseprites → SVG JSON → `aavegotchi_side-scroll_*.json` (never writes `aavegotchi_db_*`):
+
+```bash
+# Export one collateral (default: amAAVE)
+./batch-export.sh amAAVE
+
+# Export all collaterals
+./batch-export.sh --all
+
+# Assemble library into Paarcel + Paaint JSONs/
+python3 assemble-side-scroll-library.py amAAVE
+# or: python3 assemble-side-scroll-library.py --all
+```
+
+Raw SVG-JSON lands in:
+`Paarcel/Assets/Resources/Aavegotchi/JSONs/_side-scroll-raw/`
+
+Assembled files:
+- `aavegotchi_side-scroll_main.json`
+- `aavegotchi_side-scroll_collaterals.json`
+- `aavegotchi_side-scroll_eye_shapes_haunt{1,2}.json`
+- `aavegotchi_side-scroll_base-{collateral}.json`
+
+Single-file export:
+
+```bash
+aseprite -b \
+  --script-param input=/path/file.aseprite \
+  --script-param output=/path/out.svg.json \
+  --script batch-export-cli.lua
+```
 
