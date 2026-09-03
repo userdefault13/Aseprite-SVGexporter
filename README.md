@@ -8,6 +8,16 @@ An Aseprite extension that exports sprite drawings to SVG format in three differ
 
 ## Installation
 
+### npm (download extension files)
+
+```bash
+npm install @userdefault13/aseprite-svg-exporter
+```
+
+Extension files are in `node_modules/@userdefault13/aseprite-svg-exporter/`. Zip them or point Aseprite at that folder.
+
+### Package locally
+
 1. Package the extension:
    ```bash
    ./package.sh
@@ -130,5 +140,19 @@ aseprite -b \
   --script-param input=/path/file.aseprite \
   --script-param output=/path/out.svg.json \
   --script batch-export-cli.lua
+```
+
+## Publishing to npm
+
+Store your npm automation token in abra (one-time):
+
+```bash
+abra set Aseprite-SVGexporter NPM_TOKEN
+```
+
+Publish:
+
+```bash
+npm run publish:npm
 ```
 
