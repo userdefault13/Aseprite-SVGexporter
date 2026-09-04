@@ -1,5 +1,5 @@
 {
-  "name": "@userdefault13/aseprite-svg-exporter",
+  "name": "@userdefault/aseprite-svg-exporter",
   "displayName": "SVG Exporter",
   "description": "Export Aseprite drawings to SVG as inline code, JSON, or SVG files",
   "version": "1.0.4",

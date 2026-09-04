@@ -11,10 +11,10 @@ An Aseprite extension that exports sprite drawings to SVG format in three differ
 ### npm (download extension files)
 
 ```bash
-npm install @userdefault13/aseprite-svg-exporter
+npm install @userdefault/aseprite-svg-exporter
 ```
 
-Extension files are in `node_modules/@userdefault13/aseprite-svg-exporter/`. Zip them or point Aseprite at that folder.
+Extension files are in `node_modules/@userdefault/aseprite-svg-exporter/`. Zip them or point Aseprite at that folder.
 
 ### Package locally
 
